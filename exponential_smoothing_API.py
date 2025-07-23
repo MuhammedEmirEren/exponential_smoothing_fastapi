@@ -3,7 +3,38 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import warnings
+from fastapi import FastAPI
 warnings.filterwarnings('ignore')
+
+app = FastAPI()
+# API for Exponential Smoothing Time Series Forecasting
+@app.get("/")
+def readme():
+    """
+    Readme for the Exponential Smoothing Time Series Forecasting API.
+    """
+    return {
+        "message": "Welcome to the Exponential Smoothing Time Series Forecasting API",
+        "endpoints": {
+            "/forecast": "Generate forecast using Simple Exponential Smoothing",
+            "/plot": "Plot the forecast with historical data"
+        }
+    }
+
+@app.get("/forecast")
+def forecast():
+    """
+    Generate forecast using Simple Exponential Smoothing.
+    This endpoint is a placeholder for the actual forecasting logic.
+    """
+    return {"message": "Forecasting endpoint is under construction."}
+@app.get("/plot")
+def plot():
+    """
+    Plot the forecast with historical data.
+    This endpoint is a placeholder for the actual plotting logic.
+    """
+    return {"message": "Plotting endpoint is under construction."}
 
 def create_simple_exponential_smoothing_model(data):
     """
@@ -183,5 +214,5 @@ def main():
     fig.show()
 
 if __name__ == "__main__":
-    main()
-    
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
