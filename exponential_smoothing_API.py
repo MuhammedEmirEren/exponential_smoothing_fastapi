@@ -1,53 +1,198 @@
-from statsmodels.tsa.api import SimpleExpSmoothing
+from statsmodels.tsa.api import SimpleExpSmoothing, Holt, ExponentialSmoothing
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import warnings
 from fastapi import FastAPI
+from pydantic import BaseModel
 warnings.filterwarnings('ignore')
+from typing import List
 
 app = FastAPI()
 # API for Exponential Smoothing Time Series Forecasting
+
+class PriceHistory(BaseModel):
+    prices: List[float]
+
 @app.get("/")
 def readme():
     """
     Readme for the Exponential Smoothing Time Series Forecasting API.
     """
     return {
-        "message": "Welcome to the Exponential Smoothing Time Series Forecasting API",
+        "message": "Welcome to the Advanced Exponential Smoothing Time Series Forecasting API",
+        "description": "Automatically selects the best model among Simple, Holt's, and Holt-Winters methods",
         "endpoints": {
-            "/forecast": "Generate forecast using Simple Exponential Smoothing",
-            "/plot": "Plot the forecast with historical data"
-        }
+            "/forecast": "Generate forecast using the best exponential smoothing model (auto-selected)",
+            "/plot": "Plot the forecast with historical data using the best model"
+        },
+        "models_available": {
+            "simple": "Simple Exponential Smoothing (level only)",
+            "holt": "Holt's Linear Trend method (level + trend)",
+            "holtwinters": "Holt-Winters method (level + trend + seasonality)"
+        },
+        "features": [
+            "✅ Automatic model selection based on RMSE",
+            "✅ Handles trending data",
+            "✅ Seasonal pattern detection", 
+            "✅ Model comparison and evaluation",
+            "✅ Visual forecast plots"
+        ]
     }
 
-@app.get("/forecast")
-def forecast():
+@app.post("/forecast")
+def forecast(history: PriceHistory):
     """
-    Generate forecast using Simple Exponential Smoothing.
-    This endpoint is a placeholder for the actual forecasting logic.
+    Generate forecast using the best Exponential Smoothing model.
     """
-    return {"message": "Forecasting endpoint is under construction."}
-@app.get("/plot")
-def plot():
-    """
-    Plot the forecast with historical data.
-    This endpoint is a placeholder for the actual plotting logic.
-    """
-    return {"message": "Plotting endpoint is under construction."}
+    try:
+        data = pd.Series(history.prices)
 
-def create_simple_exponential_smoothing_model(data):
+        # Compare models and select the best one
+        model_results = compare_exponential_smoothing_models(data)
+        best_model_type = None
+        best_rmse = float('inf')
+        
+        for model_type, result in model_results.items():
+            if result and result['rmse'] < best_rmse:
+                best_rmse = result['rmse']
+                best_model_type = model_type
+        
+        if best_model_type:
+            print(f"\nBest model: {best_model_type.title()} (RMSE: {best_rmse:.2f})")
+            best_model = model_results[best_model_type]['model']
+        else:
+            print("Using Holt's method as fallback")
+            best_model = create_exponential_smoothing_model(data, 'holt')
+            best_model_type = 'holt'
+
+        # Generate forecast using the best model
+        forecast = forecast_simple_exponential_smoothing(best_model, steps=10)
+        
+        return {
+            "forecast": forecast.tolist(),
+            "best_model": best_model_type,
+            "rmse": best_rmse if best_model_type else "N/A",
+            "input_data_points": len(data)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/plot")
+def plot(history: PriceHistory):
     """
-    Create and fit a Simple Exponential Smoothing model.
+    Plot the forecast with historical data using the best model.
+    """
+    try:
+        data = pd.Series(history.prices)
+        
+        # Compare models and select the best one
+        model_results = compare_exponential_smoothing_models(data)
+        best_model_type = None
+        best_rmse = float('inf')
+        
+        for model_type, result in model_results.items():
+            if result and result['rmse'] < best_rmse:
+                best_rmse = result['rmse']
+                best_model_type = model_type
+        
+        if best_model_type:
+            best_model = model_results[best_model_type]['model']
+        else:
+            best_model = create_exponential_smoothing_model(data, 'holt')
+            best_model_type = 'holt'
+        
+        # Generate forecast
+        forecast = forecast_simple_exponential_smoothing(best_model, steps=10)
+        
+        # Create the plot
+        plot_exponential_smoothing_forecast(data, forecast)
+        
+        return {
+            "message": "Plot generated successfully",
+            "plot_saved": "exponential_smoothing_forecast.png",
+            "forecast": forecast.tolist(),
+            "best_model": best_model_type,
+            "rmse": best_rmse if best_model_type else "N/A",
+            "training_points": len(data),
+            "forecast_points": len(forecast)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def compare_exponential_smoothing_models(data):
+    """Compare different exponential smoothing models."""
+    models = ['simple', 'holt', 'holtwinters']
+    results = {}
+    
+    print(f"Comparing models for {len(data)} data points...")
+    
+    for model_type in models:
+        try:
+            print(f"Testing {model_type} model...")
+            model = create_exponential_smoothing_model(data, model_type)
+            
+            # Calculate AIC for comparison
+            aic = model.aic if hasattr(model, 'aic') else np.nan
+            
+            # Calculate RMSE on training data
+            fitted_values = model.fittedvalues
+            if len(fitted_values) == len(data):
+                rmse = np.sqrt(np.mean((data - fitted_values) ** 2))
+            else:
+                # Handle cases where fitted values might be shorter
+                min_len = min(len(data), len(fitted_values))
+                rmse = np.sqrt(np.mean((data[-min_len:] - fitted_values[-min_len:]) ** 2))
+            
+            results[model_type] = {
+                'model': model,
+                'aic': aic,
+                'rmse': rmse
+            }
+            
+            print(f"{model_type.title()} - AIC: {aic:.2f}, RMSE: {rmse:.2f}")
+            
+        except Exception as e:
+            print(f"Failed to fit {model_type} model: {e}")
+            results[model_type] = None
+    
+    return results
+
+def create_exponential_smoothing_model(data, model_type='holt'):
+    """
+    Create and fit an Exponential Smoothing model.
 
     Parameters:
-    - data: DataFrame containing the time series data.
+    - data: Time series data
+    - model_type: 'simple', 'holt', or 'holtwinters'
 
     Returns:
-    - fitted_model: Fitted Simple Exponential Smoothing model.
+    - fitted_model: Fitted Exponential Smoothing model.
     """
-    model = SimpleExpSmoothing(data)
-    fitted_model = model.fit()
+    if model_type == 'simple':
+        print("Fitting Simple Exponential Smoothing...")
+        model = SimpleExpSmoothing(data)
+        fitted_model = model.fit()
+    elif model_type == 'holt':
+        print("Fitting Holt's Linear Trend method...")
+        model = Holt(data)
+        fitted_model = model.fit()
+    elif model_type == 'holtwinters':
+        print("Fitting Holt-Winters (Triple Exponential Smoothing)...")
+        # Try seasonal model, fallback to trend-only if it fails
+        try:
+            model = ExponentialSmoothing(data, trend='add', seasonal='add', seasonal_periods=min(12, len(data)//2))
+            fitted_model = model.fit()
+        except:
+            print("Seasonal model failed, using trend-only model...")
+            model = ExponentialSmoothing(data, trend='add')
+            fitted_model = model.fit()
+    else:
+        # Default to Holt's method
+        print("Unknown model type, using Holt's method...")
+        model = Holt(data)
+        fitted_model = model.fit()
+    
     return fitted_model
 
 def forecast_simple_exponential_smoothing(model, steps=30):
@@ -63,155 +208,46 @@ def forecast_simple_exponential_smoothing(model, steps=30):
     - conf_int: Confidence intervals (simulated for exponential smoothing)
     """
     forecast = model.forecast(steps=steps)
-    
-    # Simple exponential smoothing doesn't provide confidence intervals directly
-    # We'll create a simple approximation based on the residuals
-    residuals = model.resid
-    std_error = np.std(residuals)
-    
-    # Create confidence intervals (approximate)
-    lower_bound = forecast - 1.96 * std_error  # 95% CI
-    upper_bound = forecast + 1.96 * std_error
-    
-    # Create a DataFrame similar to what other models return
-    conf_int = pd.DataFrame({
-        'lower': lower_bound,
-        'upper': upper_bound
-    })
-    
-    return forecast, conf_int
+    return forecast
 
-def plot_exponential_smoothing_forecast(data, training_data, model, forecast, conf_int, test_data, dates, future_dates):
+def plot_exponential_smoothing_forecast(data, forecast):
     """
     Plot the Simple Exponential Smoothing forecast with historical data.
 
     Parameters:
     - data: Historical time series data.
-    - model: Fitted Simple Exponential Smoothing model.
     - forecast: Series containing the forecasted values.
-    - dates: Dates corresponding to the historical data.
-    - future_dates: Dates for the forecasted values.
     """
     plt.figure(figsize=(12, 8))
 
-    # Plot training data
-    plt.plot(training_data['ds'], training_data['y'], 'o-', 
-             label='Training Data (Actual)', color='blue', linewidth=2, markersize=3)
+    # Plot historical data
+    plt.plot(data.index, data, 'o-', 
+             label='Historical Data', color='blue', linewidth=2, markersize=3)
     
-    # Plot actual test data
-    plt.plot(test_data['ds'], test_data['y'], 'o-', 
-             label='Test Data (Actual)', color='green', linewidth=2, markersize=4)
+    # Create forecast indices (continuing from the end of historical data)
+    forecast_start_index = data.index[-1] + 1
+    forecast_indices = range(forecast_start_index, forecast_start_index + len(forecast))
     
     # Plot forecast
-    plt.plot(test_data['ds'], forecast, '--', 
-             label='SARIMA Predictions', color='red', linewidth=2)
-    
-
-    # Plot confidence intervals
-    plt.fill_between(future_dates, conf_int['lower'], conf_int['upper'], 
-                     color='red', alpha=0.3, label='95% Confidence Interval')
+    plt.plot(forecast_indices, forecast, '--', 
+             label='Forecast', color='red', linewidth=2)
     
     # Add separation line
-    last_historical_date = training_data['ds'].max()
-    plt.axvline(x=last_historical_date, color='green', linestyle='--', linewidth=2,
-                label='Historical Data | Prediction Boundary')
+    plt.axvline(x=data.index[-1], color='green', linestyle='--', linewidth=2,
+                label='Historical Data | Forecast Boundary')
     
     plt.title('Exponential Smoothing Price Prediction Forecast')
-    plt.xlabel('Date')
+    plt.xlabel('Time Period')
     plt.ylabel('Price')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
     plt.tight_layout()
-    plt.show()
-
-def compute_mean_squared_error_of_model(test_data, forecast, train_size):
-    """
-    Compute the Mean Squared Error (MSE) of the model's predictions.
-
-    Parameters:
-    - test_data: Actual test data.
-    - forecast: Forecasted values (Series for Exponential Smoothing).
-    - train_size: Size of the training data (not used for Exponential Smoothing).
-
-    Returns:
-    - mape: Mean Absolute Percentage Error.
-    """
-    # For Exponential Smoothing, forecast is already the predictions for test period
-    test_predictions = forecast.values
-    actual_test = test_data['y'].values
     
-    if len(test_predictions) != len(actual_test):
-        min_len = min(len(test_predictions), len(actual_test))
-        test_predictions = test_predictions[:min_len]
-        actual_test = actual_test[:min_len]
+    # Save plot
+    plt.savefig('exponential_smoothing_forecast.png')
+    plt.close()  # Close the figure to free memory
     
-    # Check for NaN values and print debugging info
-    if np.isnan(test_predictions).any():
-        print("WARNING: NaN values found in predictions!")
-        print(f"Predictions: {test_predictions[:10]}")  # Show first 10 values
-    
-    if np.isnan(actual_test).any():
-        print("WARNING: NaN values found in actual test data!")
-        print(f"Actual: {actual_test[:10]}")  # Show first 10 values
-    
-    mse = ((actual_test - test_predictions) ** 2).mean()
-    
-    print(f"\n=== Exponential Smoothing Model Performance ===")
-    print(f"Test data points: {len(actual_test)}")
-    print(f"Mean Squared Error: {mse:.2f}")
-    print(f"Root Mean Squared Error: {mse**0.5:.2f}")
-    print(f"Mean Absolute Error: {abs(actual_test - test_predictions).mean():.2f}")
-    
-    # Calculate percentage error
-    mape = abs((actual_test - test_predictions) / actual_test).mean() * 100
-    print(f"Mean Absolute Percentage Error: {mape:.2f}%")
-
-    return mape
-def main():
-    averageErrorRate = 0.0
-    for i in range(1, 11):
-        # Load the data for each file
-        print(f"Processing file: price_history_{i}.csv")
-        # Load the data
-        data = pd.read_csv(f'price_history_{i}.csv') 
-        data['ds'] = pd.to_datetime(data['ds'])
-        data = data.sort_values('ds').reset_index(drop=True)
-
-        # Split data: last 90 days as test, rest as training
-        test_size = 90
-        if len(data) < test_size:
-            print(f"Warning: Data has only {len(data)} points, using last {len(data)//2} as test data")
-            test_size = len(data) // 2
-    
-        split_point = len(data) - test_size
-        training_data = data[:split_point][['ds', 'y']].copy()
-        test_data = data[split_point:][['ds', 'y']].copy()
-    
-        print(f"Total data points: {len(data)}")
-        print(f"Training data: {len(training_data)} points ({data['ds'].iloc[0]} to {training_data['ds'].iloc[-1]})")
-        print(f"Test data: {len(test_data)} points ({test_data['ds'].iloc[0]} to {test_data['ds'].iloc[-1]})")
-
-        # Create and fit the model on training data only
-        model = create_simple_exponential_smoothing_model(training_data['y'])
-
-        # Generate forecast for the test period
-        forecast, conf_int = forecast_simple_exponential_smoothing(model, steps=len(test_data))
-
-        # Calculate and display performance metrics
-        SingleMape = compute_mean_squared_error_of_model(test_data, forecast, len(training_data))
-        averageErrorRate += SingleMape
-        
-
-    
-    averageErrorRate = averageErrorRate / 10
-    print(f"\nAverage Mean Absolute Percentage Error across all files: {averageErrorRate:.2f}%")
-
-    # Plot the forecast with separation line showing actual test data
-    fig = plot_exponential_smoothing_forecast(data, training_data, model, forecast, conf_int,
-                                            test_data, training_data['ds'], 
-                                            test_data['ds'] + pd.to_timedelta(np.arange(len(forecast)), unit='D'))
-    fig.show()
+    return 'exponential_smoothing_forecast.png'
 
 if __name__ == "__main__":
     import uvicorn
