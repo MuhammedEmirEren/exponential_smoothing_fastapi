@@ -30,14 +30,7 @@ def readme():
             "simple": "Simple Exponential Smoothing (level only)",
             "holt": "Holt's Linear Trend method (level + trend)",
             "holtwinters": "Holt-Winters method (level + trend + seasonality)"
-        },
-        "features": [
-            "✅ Automatic model selection based on RMSE",
-            "✅ Handles trending data",
-            "✅ Seasonal pattern detection", 
-            "✅ Model comparison and evaluation",
-            "✅ Visual forecast plots"
-        ]
+        }
     }
 
 @app.post("/forecast")
